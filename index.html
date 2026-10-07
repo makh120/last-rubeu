@@ -1,0 +1,1390 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Последний рубеж</title>
+
+<style>
+  * {
+    box-sizing: border-box;
+  }
+
+  html, body {
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #080b14;
+    color: #fff;
+    font-family: monospace;
+    touch-action: none;
+    user-select: none;
+  }
+
+  canvas {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+  }
+
+  .controls {
+    position: fixed;
+    z-index: 2;
+    inset: auto 0 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: end;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 10px 10px calc(10px + env(safe-area-inset-bottom));
+    pointer-events: none;
+  }
+
+  .group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    pointer-events: auto;
+  }
+
+  .btn {
+    width: clamp(42px, 11vw, 68px);
+    height: clamp(42px, 11vw, 68px);
+    border: 2px solid #6ad8ff88;
+    border-radius: 14px;
+    background: #101a2be8;
+    color: #e5f7ff;
+    font: bold 22px monospace;
+    touch-action: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .btn:active {
+    background: #24506c;
+    transform: scale(.96);
+  }
+
+  .small-btn {
+    width: clamp(37px, 9vw, 52px);
+    height: clamp(37px, 9vw, 52px);
+    border-color: #ffc66d99;
+    font-size: 18px;
+  }
+
+  .shop {
+    display: none;
+    position: fixed;
+    z-index: 5;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: min(390px, calc(100vw - 24px));
+    max-height: 80vh;
+    overflow: auto;
+    padding: 14px;
+    border: 2px solid #6ad8ff99;
+    border-radius: 14px;
+    background: #101827f5;
+    box-shadow: 0 0 35px #000b;
+    touch-action: pan-y;
+  }
+
+  .shop.open {
+    display: block;
+  }
+
+  .shop h2 {
+    margin: 0 0 8px;
+    color: #8de9ff;
+    text-align: center;
+  }
+
+  .shop p {
+    margin: 6px 0 12px;
+    color: #b6c8d5;
+    text-align: center;
+    font-size: 13px;
+  }
+
+  .shop-items {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .shop-item, .shop-close {
+    padding: 9px;
+    border: 1px solid #77b4cf88;
+    border-radius: 9px;
+    background: #19283a;
+    color: #f4fbff;
+    font: 13px monospace;
+    touch-action: manipulation;
+  }
+
+  .shop-close {
+    width: 100%;
+    margin-top: 9px;
+    border-color: #ff7780aa;
+    background: #331a25;
+  }
+</style>
+</head>
+
+<body>
+<canvas id="game"></canvas>
+
+<div class="controls">
+  <div class="group">
+    <button class="btn" data-key="left">◀</button>
+    <button class="btn" data-key="right">▶</button>
+  </div>
+
+  <div class="group">
+    <button class="btn small-btn" data-action="medkit">🩹</button>
+    <button class="btn small-btn" data-action="barricade">🧱</button>
+    <button class="btn small-btn" data-action="grenade">💣</button>
+    <button class="btn small-btn" data-action="cycle">🔄</button>
+    <button class="btn small-btn" data-action="shop">🛒</button>
+  </div>
+
+  <div class="group">
+    <button class="btn" data-key="jump">▲</button>
+    <button class="btn" data-key="shoot">💥</button>
+  </div>
+</div>
+
+<div class="shop" id="shop">
+  <h2>МАГАЗИН</h2>
+  <p>Очки за убийства можно тратить на предметы и оружие.</p>
+
+  <div class="shop-items">
+    <button class="shop-item" data-buy="medkit">Аптечка +35 HP — 40</button>
+    <button class="shop-item" data-buy="barricade">Баррикада — 60</button>
+    <button class="shop-item" data-buy="armor">Броня +50 — 80</button>
+    <button class="shop-item" data-buy="grenades">3 гранаты — 50</button>
+    <button class="shop-item" data-buy="shotgun">Дробовик — 100</button>
+    <button class="shop-item" data-buy="automatic">Автомат — 180</button>
+    <button class="shop-item" data-buy="sniper">Снайперка — 220</button>
+  </div>
+
+  <button class="shop-close" data-action="shop">Закрыть магазин</button>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById("game");
+  const ctx = canvas.getContext("2d");
+  const shop = document.getElementById("shop");
+
+  let W = innerWidth;
+  let H = innerHeight;
+  let groundY = H * .80;
+
+  function resize() {
+    W = innerWidth;
+    H = innerHeight;
+    canvas.width = W;
+    canvas.height = H;
+    groundY = H * .80;
+
+    if (player) {
+      if (player.onGround) player.y = groundY - player.h;
+      else player.y = Math.min(player.y, groundY - player.h);
+    }
+  }
+
+  addEventListener("resize", resize);
+
+  // Все изображения игры перечислены здесь.
+  // Добавили новый файл — добавьте его имя в этот список.
+  const assetNames = [
+    "background", "ground",
+    "player",
+    "zombie", "runner", "shooter", "tank", "bos",
+    "medkit", "armor",
+    "shotgun", "automatic", "sniper",
+    "grenade", "barricade", "explosion"
+  ];
+
+  const assets = {};
+
+  for (const name of assetNames) {
+    const image = new Image();
+    image.src = `assets/${name}.png`;
+    assets[name] = image;
+  }
+
+  function imageReady(name) {
+    const image = assets[name];
+    return image && image.complete && image.naturalWidth > 0;
+  }
+
+  // Рисует картинку, если она загружена.
+  // Если файла нет, рисует простой прямоугольник-заглушку.
+  function drawAsset(name, x, y, w, h, fallbackColor = "#718096", flip = false) {
+    if (!imageReady(name)) {
+      ctx.fillStyle = fallbackColor;
+      ctx.fillRect(x, y, w, h);
+      return;
+    }
+
+    const image = assets[name];
+
+    ctx.save();
+    if (flip) {
+      ctx.translate(x + w, y);
+      ctx.scale(-1, 1);
+      ctx.drawImage(image, 0, 0, w, h);
+    } else {
+      ctx.drawImage(image, x, y, w, h);
+    }
+    ctx.restore();
+  }
+
+  const weaponInfo = {
+    pistol: {
+      name: "Пистолет", damage: 1, cooldown: .18, speed: 900,
+      pellets: 1, spread: .02, color: "#8de9ff", ammo: Infinity
+    },
+    shotgun: {
+      name: "Дробовик", damage: 1, cooldown: .55, speed: 800,
+      pellets: 6, spread: .32, color: "#ffbf69", ammo: 30
+    },
+    automatic: {
+      name: "Автомат", damage: 1, cooldown: .08, speed: 1100,
+      pellets: 1, spread: .08, color: "#9bff76", ammo: 120
+    },
+    sniper: {
+      name: "Снайперка", damage: 4, cooldown: .85, speed: 1900,
+      pellets: 1, spread: 0, color: "#d394ff", ammo: 15
+    }
+  };
+
+  const weaponOrder = ["pistol", "shotgun", "automatic", "sniper"];
+
+  const enemyInfo = {
+    zombie:  { w: 78, h: 100, hp: 2, speed: 65,  damage: 15, score: 10, color: "#7ea451" },
+    runner:  { w: 140, h: 90, hp: 1, speed: 155, damage: 20, score: 15, color: "#e88d4b" },
+    shooter: { w: 90, h: 110, hp: 3, speed: 38,  damage: 12, score: 25, color: "#bd6396" },
+    tank:    { w: 120, h: 140, hp: 9, speed: 32,  damage: 30, score: 35, color: "#71818a" },
+    bos:    { w: 140, h: 170, hp: 42, speed: 28, damage: 45, score: 200, color: "#a83249" }
+  };
+
+  const prices = {
+    medkit: 40, barricade: 60, armor: 80, grenades: 50,
+    shotgun: 100, automatic: 180, sniper: 220
+  };
+
+  const keys = { left: false, right: false, jump: false, shoot: false };
+
+  let player = null;
+  let cameraX = 0;
+  let state = "menu";
+
+  let enemies = [];
+  let bullets = [];
+  let enemyBullets = [];
+  let grenades = [];
+  let pickups = [];
+  let barricades = [];
+  let particles = [];
+  let messages = [];
+  let explosions = [];
+
+  let score = 0;
+  let totalScore = 0;
+  let wave = 1;
+  let spawnTimer = 1;
+  let bosWave = 0;
+  let shake = 0;
+  let bannerTimer = 0;
+  let combo = 0;
+  let comboTimer = 0;
+  let clock = 0;
+  let lastTime = performance.now();
+
+  function makePlayer() {
+    return {
+      x: 80, y: groundY - 50, w: 120, h: 100,
+      vx: 0, vy: 0,
+      facing: 1,
+      onGround: true,
+      hp: 100,
+      armor: 0,
+      weapon: "pistol",
+      unlocked: { pistol: true, shotgun: false, automatic: false, sniper: false },
+      ammo: { pistol: Infinity, shotgun: 0, automatic: 0, sniper: 0 },
+      grenades: 2,
+      fireTimer: 0,
+      grenadeTimer: 0,
+      hurtTimer: 0,
+      invulnerable: 0
+    };
+  }
+
+  function resetGame() {
+    player = makePlayer();
+    cameraX = 0;
+
+    enemies = [];
+    bullets = [];
+    enemyBullets = [];
+    grenades = [];
+    pickups = [];
+    barricades = [];
+    particles = [];
+    messages = [];
+    explosions = [];
+
+    score = 0;
+    totalScore = 0;
+    wave = 1;
+    spawnTimer = 1;
+    bosWave = 0;
+    shake = 0;
+    bannerTimer = 0;
+    combo = 0;
+    comboTimer = 0;
+    clock = 0;
+
+    state = "playing";
+    shop.classList.remove("open");
+  }
+
+  resize();
+  player = makePlayer();
+
+  function random(a, b) {
+    return a + Math.random() * (b - a);
+  }
+
+  function overlaps(a, b) {
+    return a.x < b.x + b.w &&
+      a.x + a.w > b.x &&
+      a.y < b.y + b.h &&
+      a.y + a.h > b.y;
+  }
+
+  function message(text, x, y, color = "#fff") {
+    messages.push({ text, x, y, color, life: 1 });
+  }
+
+  function particlesBurst(x, y, count, color) {
+    for (let i = 0; i < count; i++) {
+      particles.push({
+        x, y,
+        vx: random(-180, 180),
+        vy: random(-240, 20),
+        life: random(.25, .7),
+        color,
+        size: random(2, 6)
+      });
+    }
+  }
+
+  function spawnEnemy(type) {
+    const info = enemyInfo[type];
+    const side = Math.random() < .75 ? 1 : -1;
+    const x = player.x + player.w / 2 + side * (W * .55 + random(0, 180));
+    const hp = type === "bos"
+      ? info.hp + wave * 5
+      : info.hp + Math.floor((wave - 1) / 3);
+
+    enemies.push({
+      type,
+      x,
+      y: groundY - info.h,
+      w: info.w,
+      h: info.h,
+      hp,
+      maxHp: hp,
+      speed: info.speed * (1 + wave * .035),
+      damage: info.damage,
+      reward: info.score,
+      facing: x < player.x ? 1 : -1,
+      fireTimer: random(.5, 1.5),
+      hitTimer: 0
+    });
+  }
+
+  function randomEnemyType() {
+    const options = ["zombie", "zombie"];
+
+    if (wave >= 2) options.push("runner");
+    if (wave >= 3) options.push("shooter");
+    if (wave >= 4) options.push("tank");
+    if (wave >= 6) options.push("tank", "shooter");
+
+    return options[Math.floor(Math.random() * options.length)];
+  }
+
+  function buy(item) {
+    if (state !== "playing") return;
+
+    const cost = prices[item];
+    if (cost === undefined) return;
+
+    if (score < cost) {
+      message(`Нужно ${cost} очков`, player.x, player.y - 10, "#ff7180");
+      return;
+    }
+
+    if (item === "medkit" && player.hp >= 100) {
+      message("Здоровье уже полное", player.x, player.y - 10, "#ffe77a");
+      return;
+    }
+
+    if (item === "armor" && player.armor >= 100) {
+      message("Броня уже полная", player.x, player.y - 10, "#ffe77a");
+      return;
+    }
+
+    if (item === "barricade") {
+      const w = 74;
+      const h = 56;
+      const x = player.facing > 0
+        ? player.x + player.w + 14
+        : player.x - w - 14;
+      const candidate = { x, y: groundY - h, w, h };
+
+      if (overlaps(candidate, player) || barricades.some(b => overlaps(candidate, b))) {
+        message("Здесь нельзя строить", player.x, player.y - 10, "#ff7180");
+        return;
+      }
+
+      score -= cost;
+      barricades.push({ ...candidate, hp: 110, maxHp: 110 });
+      message("Баррикада построена", x, candidate.y - 8, "#ffd477");
+      return;
+    }
+
+    score -= cost;
+
+    if (item === "medkit") {
+      const amount = Math.min(35, 100 - player.hp);
+      player.hp += amount;
+      message(`+${amount} HP`, player.x, player.y - 10, "#75ff9a");
+    }
+
+    if (item === "armor") {
+      player.armor = Math.min(100, player.armor + 50);
+      message("+50 брони", player.x, player.y - 10, "#83d9ff");
+    }
+
+    if (item === "grenades") {
+      player.grenades += 3;
+      message("+3 гранаты", player.x, player.y - 10, "#ffd477");
+    }
+
+    if (["shotgun", "automatic", "sniper"].includes(item)) {
+      player.unlocked[item] = true;
+      player.weapon = item;
+      player.ammo[item] += weaponInfo[item].ammo;
+      message(`${weaponInfo[item].name} куплено`, player.x, player.y - 10, weaponInfo[item].color);
+    }
+  }
+
+  function selectWeapon(type) {
+    if (!player.unlocked[type]) {
+      message("Сначала купи это оружие", player.x, player.y - 10, "#ffe77a");
+      return;
+    }
+    player.weapon = type;
+    message(weaponInfo[type].name, player.x, player.y - 10, weaponInfo[type].color);
+  }
+
+  function cycleWeapon() {
+    const available = weaponOrder.filter(type => player.unlocked[type]);
+    const current = available.indexOf(player.weapon);
+    player.weapon = available[(current + 1) % available.length];
+    message(weaponInfo[player.weapon].name, player.x, player.y - 10, weaponInfo[player.weapon].color);
+  }
+
+  function throwGrenade() {
+    if (state !== "playing") return;
+
+    if (player.grenades <= 0) {
+      message("Гранат нет — купи в магазине", player.x, player.y - 10, "#ff7180");
+      return;
+    }
+
+    if (player.grenadeTimer > 0) return;
+
+    player.grenades--;
+    player.grenadeTimer = .45;
+
+    grenades.push({
+      x: player.x + player.w / 2,
+      y: player.y + 20,
+      vx: player.facing * 370,
+      vy: -360,
+      fuse: 1.1
+    });
+  }
+
+  function fire() {
+    if (player.fireTimer > 0) return;
+
+    const type = player.weapon;
+    const gun = weaponInfo[type];
+
+    if (type !== "pistol" && player.ammo[type] <= 0) {
+      message("Патроны кончились", player.x, player.y - 10, "#ff7180");
+      player.weapon = "pistol";
+      return;
+    }
+
+    player.fireTimer = gun.cooldown;
+    if (type !== "pistol") player.ammo[type]--;
+
+    const direction = player.facing;
+    const startX = player.x + (direction > 0 ? player.w : 0);
+    const startY = player.y + 24;
+
+    for (let i = 0; i < gun.pellets; i++) {
+      const angle = (direction > 0 ? 0 : Math.PI) + random(-gun.spread, gun.spread);
+
+      bullets.push({
+        x: startX,
+        y: startY,
+        vx: Math.cos(angle) * gun.speed,
+        vy: Math.sin(angle) * gun.speed,
+        w: 10,
+        h: 4,
+        damage: gun.damage,
+        life: 1.5,
+        color: gun.color,
+        hit: []
+      });
+    }
+  }
+
+  function hurtPlayer(amount, fromX) {
+    if (player.invulnerable > 0 || state !== "playing") return;
+
+    let damage = amount;
+
+    if (player.armor > 0) {
+      const absorbed = Math.min(player.armor, Math.ceil(amount * .6));
+      player.armor -= absorbed;
+      damage -= absorbed;
+    }
+
+    player.hp = Math.max(0, player.hp - damage);
+    player.invulnerable = .6;
+    player.hurtTimer = .18;
+    player.vx += player.x < fromX ? -150 : 150;
+
+    shake = Math.max(shake, 8);
+    particlesBurst(player.x + player.w / 2, player.y + player.h / 2, 9, "#ed4057");
+
+    if (player.hp <= 0) {
+      state = "dead";
+      shop.classList.remove("open");
+    }
+  }
+
+  function explode(grenade) {
+    const radius = 145;
+
+    if (imageReady("explosion")) {
+      explosions.push({
+        x: grenade.x,
+        y: grenade.y,
+        life: .45,
+        maxLife: .45,
+        radius
+      });
+    }
+
+    particlesBurst(grenade.x, grenade.y, 30, "#ff9c42");
+    shake = Math.max(shake, 12);
+
+    for (const enemy of enemies) {
+      const distance = Math.hypot(
+        enemy.x + enemy.w / 2 - grenade.x,
+        enemy.y + enemy.h / 2 - grenade.y
+      );
+
+      if (distance < radius) {
+        const damage = Math.max(1, Math.round(12 * (1 - distance / radius)));
+        enemy.hp -= damage;
+        message(`-${damage}`, enemy.x, enemy.y, "#ffbd69");
+      }
+    }
+
+    for (const b of barricades) {
+      const distance = Math.hypot(
+        b.x + b.w / 2 - grenade.x,
+        b.y + b.h / 2 - grenade.y
+      );
+      if (distance < radius) b.hp -= 45;
+    }
+
+    barricades = barricades.filter(b => b.hp > 0);
+  }
+
+  function dropLoot(enemy) {
+    // Аптечка: редкий шанс — 3%.
+    if (Math.random() < .03) {
+      pickups.push({
+        type: "medkit",
+        x: enemy.x + enemy.w / 2 - 12,
+        y: groundY - 25,
+        w: 24,
+        h: 22
+      });
+      return;
+    }
+
+    if (Math.random() < .05) {
+      pickups.push({
+        type: "armor",
+        x: enemy.x + enemy.w / 2 - 12,
+        y: groundY - 25,
+        w: 24,
+        h: 22
+      });
+    }
+
+    if (Math.random() < .07) {
+      const type = ["shotgun", "automatic", "sniper"][Math.floor(Math.random() * 3)];
+      const amount = type === "shotgun" ? 12 : type === "automatic" ? 35 : 5;
+
+      pickups.push({
+        type,
+        amount,
+        x: enemy.x + enemy.w / 2 - 13,
+        y: groundY - 17,
+        w: 26,
+        h: 14
+      });
+    }
+  }
+
+  function update(dt) {
+    clock += dt;
+
+    cameraX += (player.x - W * .35 - cameraX) * Math.min(1, dt * 7);
+    shake *= .86;
+    if (shake < .2) shake = 0;
+
+    player.fireTimer = Math.max(0, player.fireTimer - dt);
+    player.grenadeTimer = Math.max(0, player.grenadeTimer - dt);
+    player.invulnerable = Math.max(0, player.invulnerable - dt);
+    player.hurtTimer = Math.max(0, player.hurtTimer - dt);
+
+    comboTimer = Math.max(0, comboTimer - dt);
+    if (comboTimer === 0) combo = 0;
+
+    const direction = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
+
+    if (direction) {
+      player.vx += direction * 1900 * dt;
+      player.facing = direction;
+    } else {
+      player.vx *= Math.max(0, 1 - 9 * dt);
+    }
+
+    player.vx = Math.max(-320, Math.min(320, player.vx));
+
+    if (keys.jump && player.onGround) {
+      player.vy = -590;
+      player.onGround = false;
+    }
+
+    if (keys.shoot) fire();
+
+    player.vy += 1700 * dt;
+    const previousX = player.x;
+player.x += player.vx * dt;
+
+for (const b of barricades) {
+  const verticalOverlap =
+    player.y < b.y + b.h &&
+    player.y + player.h > b.y;
+
+  if (!verticalOverlap) continue;
+
+  // Игрок шёл вправо и упёрся в баррикаду.
+  if (
+    player.vx > 0 &&
+    previousX + player.w <= b.x &&
+    player.x + player.w > b.x
+  ) {
+    player.x = b.x - player.w;
+    player.vx = 0;
+  }
+
+  // Игрок шёл влево и упёрся в баррикаду.
+  else if (
+    player.vx < 0 &&
+    previousX >= b.x + b.w &&
+    player.x < b.x + b.w
+  ) {
+    player.x = b.x + b.w;
+    player.vx = 0;
+  }
+}
+    player.y += player.vy * dt;
+
+    if (player.y + player.h >= groundY) {
+      player.y = groundY - player.h;
+      player.vy = 0;
+      player.onGround = true;
+    }
+
+    // Пули игрока.
+    for (const bullet of bullets) {
+      bullet.x += bullet.vx * dt;
+      bullet.y += bullet.vy * dt;
+      bullet.life -= dt;
+
+      for (const enemy of enemies) {
+        if (bullet.life <= 0) break;
+        if (bullet.hit.includes(enemy)) continue;
+        if (!overlaps(bullet, enemy)) continue;
+
+        enemy.hp -= bullet.damage;
+        bullet.hit.push(enemy);
+        bullet.life = 0;
+        particlesBurst(bullet.x, bullet.y, 4, "#ff465c");
+      }
+    }
+
+    bullets = bullets.filter(b => b.life > 0);
+
+    // Вражеские снаряды.
+    for (const bullet of enemyBullets) {
+      bullet.x += bullet.vx * dt;
+      bullet.y += bullet.vy * dt;
+      bullet.life -= dt;
+
+      if (overlaps(bullet, player)) {
+        hurtPlayer(12, bullet.x);
+        bullet.life = 0;
+      }
+    }
+
+    enemyBullets = enemyBullets.filter(b => b.life > 0);
+
+    // Гранаты и взрывы.
+    for (const grenade of grenades) {
+      grenade.vy += 800 * dt;
+      grenade.x += grenade.vx * dt;
+      grenade.y += grenade.vy * dt;
+
+      if (grenade.y + 9 >= groundY) {
+        grenade.y = groundY - 9;
+        grenade.vy *= -.3;
+        grenade.vx *= .75;
+      }
+
+      grenade.fuse -= dt;
+
+      if (grenade.fuse <= 0) {
+        explode(grenade);
+        grenade.dead = true;
+      }
+    }
+
+    grenades = grenades.filter(g => !g.dead);
+
+    // Враги.
+    for (const enemy of enemies) {
+      const dx = player.x - enemy.x;
+      enemy.facing = dx >= 0 ? 1 : -1;
+      enemy.hitTimer = Math.max(0, enemy.hitTimer - dt);
+
+      if (enemy.type === "shooter") {
+        if (Math.abs(dx) > 360) enemy.x += Math.sign(dx) * enemy.speed * dt;
+
+        enemy.fireTimer -= dt;
+        if (enemy.fireTimer <= 0 && Math.abs(dx) < 480) {
+          const sx = enemy.x + enemy.w / 2;
+          const sy = enemy.y + enemy.h / 2;
+          const tx = player.x + player.w / 2 - sx;
+          const ty = player.y + player.h / 2 - sy;
+          const length = Math.hypot(tx, ty) || 1;
+
+          enemyBullets.push({
+            x: sx,
+            y: sy,
+            w: 12,
+            h: 12,
+            vx: tx / length * 420,
+            vy: ty / length * 420,
+            life: 2,
+            color: "#ff3489"
+          });
+
+          enemy.fireTimer = 1.6;
+        }
+      } else {
+        const next = {
+          x: enemy.x + Math.sign(dx) * enemy.speed * dt,
+          y: enemy.y,
+          w: enemy.w,
+          h: enemy.h
+        };
+
+       const barrier = barricades.find(b => overlaps(next, b));
+
+if (barrier) {
+  enemy.x = enemy.x; // Враг остаётся перед стеной.
+  enemy.hitTimer -= dt;
+
+  if (enemy.hitTimer <= 0) {
+    barrier.hp -= enemy.type === "bos" ? 20 : 10;
+    enemy.hitTimer = .7;
+  }
+} else {
+  enemy.x += Math.sign(dx) * enemy.speed * dt;
+}
+
+        if (barrier) {
+          enemy.hitTimer -= dt;
+          if (enemy.hitTimer <= 0) {
+            barrier.hp -= enemy.type === "bos" ? 20 : 10;
+            enemy.hitTimer = .7;
+          }
+        } else {
+          enemy.x += Math.sign(dx) * enemy.speed * dt;
+        }
+      }
+
+      if (overlaps(enemy, player)) {
+        hurtPlayer(enemy.damage, enemy.x);
+      }
+    }
+
+    // Смерть врагов и награды.
+    for (const enemy of enemies) {
+      if (enemy.hp > 0 || enemy.dead) continue;
+
+      enemy.dead = true;
+      combo++;
+      comboTimer = 3.5;
+
+      const bonus = Math.min(20, Math.max(0, combo - 1) * 2);
+      const reward = enemy.reward + bonus;
+
+      score += reward;
+      totalScore += reward;
+
+      message(`+${reward}`, enemy.x, enemy.y, "#ffe77a");
+      particlesBurst(enemy.x + enemy.w / 2, enemy.y + enemy.h / 2, 12, "#b9233a");
+      dropLoot(enemy);
+    }
+
+    enemies = enemies.filter(e => !e.dead);
+    barricades = barricades.filter(b => b.hp > 0);
+
+    // Предметы, выпавшие из врагов.
+    for (const item of pickups) {
+      if (!overlaps(item, player)) continue;
+
+      if (item.type === "medkit") {
+        const healed = Math.min(35, 100 - player.hp);
+        player.hp += healed;
+        message(`+${healed} HP`, item.x, item.y, "#75ff9a");
+      } else if (item.type === "armor") {
+        player.armor = Math.min(100, player.armor + 30);
+        message("+30 брони", item.x, item.y, "#83d9ff");
+      } else {
+        player.unlocked[item.type] = true;
+        player.weapon = item.type;
+        player.ammo[item.type] += item.amount;
+        message(`+${item.amount} патронов`, item.x, item.y, weaponInfo[item.type].color);
+      }
+
+      item.dead = true;
+    }
+
+    pickups = pickups.filter(p => !p.dead);
+
+    for (const p of particles) {
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vy += 500 * dt;
+      p.life -= dt;
+    }
+    particles = particles.filter(p => p.life > 0);
+
+    for (const m of messages) {
+      m.y -= 32 * dt;
+      m.life -= dt;
+    }
+    messages = messages.filter(m => m.life > 0);
+
+    for (const e of explosions) e.life -= dt;
+    explosions = explosions.filter(e => e.life > 0);
+
+    const nextWave = 1 + Math.floor(totalScore / 200);
+    if (nextWave > wave) {
+      wave = nextWave;
+      bannerTimer = 2.2;
+    }
+
+    bannerTimer = Math.max(0, bannerTimer - dt);
+
+    if (
+      wave % 5 === 0 &&
+      bosWave !== wave &&
+      !enemies.some(e => e.type === "bos")
+    ) {
+      spawnEnemy("bos");
+      bosWave = wave;
+    }
+
+    spawnTimer -= dt;
+    if (spawnTimer <= 0) {
+      spawnEnemy(randomEnemyType());
+      spawnTimer = Math.max(.55, 1.8 - wave * .06);
+    }
+  }
+
+  function drawBackground() {
+    if (imageReady("background")) {
+      ctx.drawImage(assets.background, 0, 0, W, H);
+    } else {
+      const gradient = ctx.createLinearGradient(0, 0, 0, H);
+      gradient.addColorStop(0, "#11182f");
+      gradient.addColorStop(1, "#384658");
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, W, H);
+
+      ctx.fillStyle = "#202d40";
+      for (let i = -1; i < W / 180 + 3; i++) {
+        const x = i * 180 - ((cameraX * .25) % 180);
+        ctx.beginPath();
+        ctx.moveTo(x, groundY);
+        ctx.lineTo(x + 90, groundY - 100);
+        ctx.lineTo(x + 180, groundY);
+        ctx.fill();
+      }
+    }
+
+    if (imageReady("ground")) {
+      const tile = assets.ground;
+      const tileW = 128;
+      for (let x = -((cameraX % tileW)); x < W; x += tileW) {
+        ctx.drawImage(tile, x, groundY, tileW, H - groundY);
+      }
+    } else {
+      ctx.fillStyle = "#111923";
+      ctx.fillRect(0, groundY, W, H - groundY);
+      ctx.fillStyle = "#4fc3f7";
+      ctx.fillRect(0, groundY, W, 3);
+      ctx.fillStyle = "#26313d";
+
+      for (let x = -((cameraX * .8) % 42); x < W; x += 42) {
+        ctx.fillRect(x, groundY + 18, 20, 3);
+      }
+    }
+  }
+
+  function drawBarricade(b) {
+  // Позиция на экране = позиция в игровом мире минус смещение камеры.
+  const screenX = b.x - cameraX;
+
+  if (imageReady("barricade")) {
+    drawAsset("barricade", screenX, b.y, b.w, b.h);
+  } else {
+    ctx.fillStyle = "#795b3a";
+    ctx.fillRect(screenX, b.y, b.w, b.h);
+
+    ctx.fillStyle = "#c49a61";
+    ctx.fillRect(screenX + 4, b.y + 12, b.w - 8, 8);
+    ctx.fillRect(screenX + 4, b.y + 34, b.w - 8, 8);
+  }
+
+  // Полоса здоровья тоже рисуется в экранных координатах.
+  ctx.fillStyle = "#111";
+  ctx.fillRect(screenX, b.y - 7, b.w, 4);
+
+  ctx.fillStyle = "#ffc66d";
+  ctx.fillRect(
+    screenX,
+    b.y - 7,
+    b.w * Math.max(0, b.hp / b.maxHp),
+    4
+  );
+}
+  function drawEnemy(enemy) {
+    const colors = {
+      zombie: "#7ea451",
+      runner: "#e88d4b",
+      shooter: "#bd6396",
+      tank: "#71818a",
+      bos: "#a83249"
+    };
+
+    drawAsset(
+      enemy.type,
+      enemy.x - cameraX,
+      enemy.y,
+      enemy.w,
+      enemy.h,
+      colors[enemy.type],
+      enemy.facing < 0
+    );
+
+    ctx.fillStyle = "#17121a";
+    ctx.fillRect(enemy.x - cameraX, enemy.y - 8, enemy.w, 4);
+
+    ctx.fillStyle = enemy.type === "bos" ? "#ff5268" : "#8cff70";
+    ctx.fillRect(
+      enemy.x - cameraX,
+      enemy.y - 8,
+      enemy.w * Math.max(0, enemy.hp / enemy.maxHp),
+      4
+    );
+  }
+
+  function drawPlayer() {
+    if (player.invulnerable > 0 && Math.floor(clock * 20) % 2 === 0) return;
+
+    if (player.armor > 0) {
+      ctx.strokeStyle = "#70dcffaa";
+      ctx.lineWidth = 3;
+      ctx.strokeRect(player.x - cameraX - 3, player.y - 3, player.w + 6, player.h + 6);
+    }
+
+    drawAsset(
+      "player",
+      player.x - cameraX,
+      player.y,
+      player.w,
+      player.h,
+      "#4fc3f7",
+      player.facing < 0
+    );
+
+    // Простое оружие-заглушка, если изображение оружия пока не нарисовано.
+    const gun = weaponInfo[player.weapon];
+    ctx.fillStyle = gun.color;
+    const gunX = player.facing > 0
+      ? player.x - cameraX + player.w - 1
+      : player.x - cameraX - 15;
+    ctx.fillRect(gunX, player.y + 23, 17, 5);
+  }
+
+  function drawItem(item) {
+    const fallback = item.type === "medkit"
+      ? "#36d475"
+      : item.type === "armor"
+        ? "#53c9ef"
+        : "#f0b447";
+
+    drawAsset(
+      item.type,
+      item.x - cameraX,
+      item.y,
+      item.w,
+      item.h,
+      fallback
+    );
+  }
+
+  function draw() {
+    ctx.save();
+
+    if (shake > .2) {
+      ctx.translate(random(-shake, shake), random(-shake, shake));
+    }
+
+    drawBackground();
+
+    for (const b of barricades) drawBarricade(b);
+    for (const item of pickups) drawItem(item);
+    for (const enemy of enemies) drawEnemy(enemy);
+
+    for (const bullet of bullets) {
+      ctx.fillStyle = bullet.color;
+      ctx.fillRect(bullet.x - cameraX, bullet.y, bullet.w, bullet.h);
+    }
+
+    for (const bullet of enemyBullets) {
+      ctx.fillStyle = bullet.color;
+      ctx.fillRect(bullet.x - cameraX, bullet.y, bullet.w, bullet.h);
+    }
+
+    for (const grenade of grenades) {
+      if (imageReady("grenade")) {
+        drawAsset("grenade", grenade.x - cameraX - 9, grenade.y - 9, 18, 18);
+      } else {
+        ctx.fillStyle = grenade.fuse < .3 ? "#ff382f" : "#c1a54a";
+        ctx.beginPath();
+        ctx.arc(grenade.x - cameraX, grenade.y, 8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    for (const explosion of explosions) {
+      const progress = 1 - explosion.life / explosion.maxLife;
+      const size = explosion.radius * 2 * progress;
+
+      if (imageReady("explosion")) {
+        drawAsset(
+          "explosion",
+          explosion.x - cameraX - size / 2,
+          explosion.y - size / 2,
+          size,
+          size
+        );
+      } else {
+        ctx.globalAlpha = Math.max(0, 1 - progress);
+        ctx.fillStyle = "#ff9c42";
+        ctx.beginPath();
+        ctx.arc(explosion.x - cameraX, explosion.y, explosion.radius * progress, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    drawPlayer();
+
+    for (const p of particles) {
+      ctx.globalAlpha = Math.max(0, p.life);
+      ctx.fillStyle = p.color;
+      ctx.fillRect(p.x - cameraX, p.y, p.size, p.size);
+    }
+    ctx.globalAlpha = 1;
+
+    for (const m of messages) {
+      ctx.globalAlpha = Math.max(0, m.life);
+      ctx.fillStyle = m.color;
+      ctx.font = "bold 14px monospace";
+      ctx.textAlign = "center";
+      ctx.fillText(m.text, m.x - cameraX, m.y);
+    }
+    ctx.globalAlpha = 1;
+
+    ctx.restore();
+
+    drawHUD();
+
+    if (bannerTimer > 0 && state === "playing") {
+      ctx.fillStyle = "#e9fbff";
+      ctx.font = "bold 36px monospace";
+      ctx.textAlign = "center";
+      ctx.fillText(`ВОЛНА ${wave}`, W / 2, H * .27);
+    }
+
+    if (state === "menu") drawOverlay("ПОСЛЕДНИЙ РУБЕЖ", "Нажми ENTER или коснись экрана, чтобы начать");
+    if (state === "dead") drawOverlay("ТЫ ПАЛ", `Счёт: ${totalScore} · Волна: ${wave} · R — заново`);
+  }
+
+  function drawHUD() {
+    ctx.fillStyle = "#f0f7ff";
+    ctx.font = "bold 15px monospace";
+    ctx.textAlign = "left";
+
+    ctx.fillText(`HP: ${player.hp} / 100`, 14, 22);
+    ctx.fillText(`Броня: ${player.armor}`, 14, 43);
+    ctx.fillText(`Очки: ${score}`, 14, 64);
+    ctx.fillText(`Волна: ${wave}`, 14, 85);
+
+    const ammo = player.weapon === "pistol" ? "∞" : player.ammo[player.weapon];
+    ctx.fillStyle = weaponInfo[player.weapon].color;
+    ctx.fillText(`${weaponInfo[player.weapon].name}: ${ammo}`, 14, 106);
+
+    ctx.fillStyle = "#ffd477";
+    ctx.fillText(`Гранаты: ${player.grenades}`, 14, 127);
+
+    if (combo > 1 && comboTimer > 0) {
+      ctx.fillStyle = "#fff078";
+      ctx.fillText(`Серия убийств x${combo}`, 14, 148);
+    }
+
+    const barX = 14;
+    const barY = H - 28;
+    const barW = 180;
+    const barH = 12;
+
+    ctx.fillStyle = "#10151d";
+    ctx.fillRect(barX, barY, barW, barH);
+
+    ctx.fillStyle = player.hp > 30 ? "#41d66d" : "#f04452";
+    ctx.fillRect(barX, barY, barW * player.hp / 100, barH);
+
+    ctx.strokeStyle = "#d5e8f2";
+    ctx.strokeRect(barX, barY, barW, barH);
+  }
+
+  function drawOverlay(title, subtitle) {
+    ctx.fillStyle = "#05070bd9";
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+
+    ctx.fillStyle = "#ff5268";
+    ctx.font = `bold ${Math.min(42, W * .085)}px monospace`;
+    ctx.fillText(title, W / 2, H * .38);
+
+    ctx.fillStyle = "#e0e8f2";
+    ctx.font = "15px monospace";
+    ctx.fillText(subtitle, W / 2, H * .51);
+
+    if (state === "menu") {
+      ctx.fillStyle = "#a9dfff";
+      ctx.font = "13px monospace";
+      ctx.fillText("H — аптечка · B — баррикада · G — граната · E — магазин", W / 2, H * .60);
+      ctx.fillText("Q — смена оружия · 1–4 — выбрать оружие", W / 2, H * .65);
+    }
+  }
+
+  function toggleShop() {
+    if (state === "playing") shop.classList.toggle("open");
+  }
+
+  function action(name) {
+    if (name === "shop") toggleShop();
+    else if (name === "medkit") buy("medkit");
+    else if (name === "barricade") buy("barricade");
+    else if (name === "grenade") throwGrenade();
+    else if (name === "cycle") cycleWeapon();
+  }
+
+  function keyDown(event) {
+    const key = event.key.toLowerCase();
+
+    if (["arrowleft", "arrowright", "arrowup", " ", "enter"].includes(key)) {
+      event.preventDefault();
+    }
+
+    if (state === "menu" && key === "enter") {
+      resetGame();
+      return;
+    }
+
+    if (state === "dead" && key === "r") {
+      resetGame();
+      return;
+    }
+
+    if (key === "escape" && shop.classList.contains("open")) {
+      shop.classList.remove("open");
+      return;
+    }
+
+    if (shop.classList.contains("open")) return;
+
+    if (key === "a" || key === "arrowleft") keys.left = true;
+    if (key === "d" || key === "arrowright") keys.right = true;
+    if (key === "w" || key === "arrowup" || key === " ") keys.jump = true;
+    if (key === "j" || key === "f") keys.shoot = true;
+
+    if (event.repeat) return;
+
+    if (key === "h") buy("medkit");
+    if (key === "b") buy("barricade");
+    if (key === "g") throwGrenade();
+    if (key === "q") cycleWeapon();
+    if (key === "e") toggleShop();
+
+    if (key === "1") selectWeapon("pistol");
+    if (key === "2") selectWeapon("shotgun");
+    if (key === "3") selectWeapon("automatic");
+    if (key === "4") selectWeapon("sniper");
+  }
+
+  function keyUp(event) {
+    const key = event.key.toLowerCase();
+
+    if (key === "a" || key === "arrowleft") keys.left = false;
+    if (key === "d" || key === "arrowright") keys.right = false;
+    if (key === "w" || key === "arrowup" || key === " ") keys.jump = false;
+    if (key === "j" || key === "f") keys.shoot = false;
+  }
+
+  addEventListener("keydown", keyDown);
+  addEventListener("keyup", keyUp);
+
+  addEventListener("blur", () => {
+    keys.left = false;
+    keys.right = false;
+    keys.jump = false;
+    keys.shoot = false;
+  });
+
+  // Кнопки управления на сенсорном экране.
+  for (const button of document.querySelectorAll(".controls .btn")) {
+    button.addEventListener("pointerdown", event => {
+      event.preventDefault();
+
+      if (state === "menu" || state === "dead") {
+        resetGame();
+        return;
+      }
+
+      if (button.dataset.action) {
+        action(button.dataset.action);
+        return;
+      }
+
+      const key = button.dataset.key;
+      if (key) {
+        keys[key] = true;
+        button.setPointerCapture?.(event.pointerId);
+      }
+    });
+
+    const release = event => {
+      event.preventDefault();
+      if (button.dataset.key) keys[button.dataset.key] = false;
+    };
+
+    button.addEventListener("pointerup", release);
+    button.addEventListener("pointercancel", release);
+    button.addEventListener("lostpointercapture", release);
+  }
+
+  // Кнопки магазина.
+  for (const button of document.querySelectorAll(".shop [data-buy]")) {
+    button.addEventListener("click", () => buy(button.dataset.buy));
+  }
+
+  for (const button of document.querySelectorAll(".shop [data-action]")) {
+    button.addEventListener("click", () => action(button.dataset.action));
+  }
+
+  canvas.addEventListener("pointerdown", () => {
+    if (state === "menu" || state === "dead") resetGame();
+  });
+
+  function loop(now) {
+    const dt = Math.min(.033, (now - lastTime) / 1000);
+    lastTime = now;
+
+    if (state === "playing" && !shop.classList.contains("open")) {
+      update(dt);
+    } else {
+      for (const p of particles) {
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        p.vy += 500 * dt;
+        p.life -= dt;
+      }
+      particles = particles.filter(p => p.life > 0);
+
+      for (const m of messages) {
+        m.y -= 30 * dt;
+        m.life -= dt;
+      }
+      messages = messages.filter(m => m.life > 0);
+    }
+
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
